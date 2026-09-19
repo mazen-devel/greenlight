@@ -1,0 +1,8 @@
+[tools]
+"github:golang-migrate/migrate" = "latest"
+go = "latest"
+
+[tasks]
+up = { run = "podman-compose up -d" }
+down = { run = "podman-compose down" }
+r = { run = "go run ./cmd/api" }
