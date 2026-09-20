@@ -125,7 +125,8 @@ export DB_PASSWORD="<the password>"
 export GREENLIGHT_DB_DSN="postgres://${DB_NAME}:${DB_PASSWORD}@localhost:5432/greenlight?sslmode=disable"
 ```
 
-# Start PostgreSQL and Mailpit services via mise or docker-compose
+# Start PostgreSQL and Mailpit services 
+### 1. via mise or docker-compose
 ``` bash
 mise run up
 # OR: podman-compose up -d / docker compose up -d
