@@ -19,32 +19,23 @@ Greenlight eschews heavy all-in-one frameworks in favor of composable Go standar
 * **Domain & Data Layer (`internal/data`)**: Encapsulates data models, validation rules, type extensions (e.g. custom JSON serialization), and SQL queries utilizing PostgreSQL features.
 * **Infrastructure Services (`internal/mailer`, `internal/validator`)**: Dedicated, decoupled components for email delivery and input validation.
 
-+-------------------------------------------------------------------+
-|                        HTTP / Client Layer                        |
-+-------------------------------------------------------------------+
-                                  |
-                                  v
-+-------------------------------------------------------------------+
-| Middlewares: Panic Recovery | Rate Limiter (Token Bucket)         |
-+-------------------------------------------------------------------+
-                                  |
-                                  v
-+-------------------------------------------------------------------+
-| Handlers & Envelopes (`cmd/api`) | Validation (`internal/validator`)|
-+-------------------------------------------------------------------+
-                                  |
-                                  v
-+-------------------------------------------------------------------+
-| Data Layer (`internal/data`)     | Mailer (`internal/mailer`)     |
-| - Optimistic Locking             | - Embedded Templates (`embed.FS`)|
-| - Full-Text Search (GIN)         | - Async Background Goroutines  |
-+-------------------------------------------------------------------+
-                                  |
-                                  v
-+-------------------------------------------------------------------+
-| PostgreSQL 18 Database           | Mailpit / SMTP Server          |
-+-------------------------------------------------------------------+
+```mermaid
+graph TD
+    Client[HTTP / Client Layer]
+    MW[Middlewares: Panic Recovery | Rate Limiter]
+    Handlers[Handlers & Envelopes `cmd/api` | Validation `internal/validator`]
+    Data[Data Layer `internal/data` <br/>- Optimistic Locking<br/>- Full-Text Search GIN]
+    Mailer[Mailer `internal/mailer` <br/>- Embedded Templates embed.FS<br/>- Async Background Goroutines]
+    DB[(PostgreSQL 18 Database)]
+    SMTP[Mailpit / SMTP Server]
 
+    Client --> MW
+    MW --> Handlers
+    Handlers --> Data
+    Handlers --> Mailer
+    Data --> DB
+    Mailer --> SMTP
+```
 ---
 
 ## ⚡ Key Technical Features & Deep Dive
