@@ -1,0 +1,2165 @@
+Project Path: greenlight
+
+Source Tree:
+
+```txt
+greenlight
+├── Makefile
+├── README.md
+├── \
+├── bin
+├── cmd
+│   └── api
+│       ├── errors.go
+│       ├── healthcheck.go
+│       ├── helpers.go
+│       ├── main.go
+│       ├── middleware.go
+│       ├── movies.go
+│       ├── routes.go
+│       ├── server.go
+│       └── users.go
+├── compose.yml
+├── go.mod
+├── go.sum
+├── internal
+│   ├── data
+│   │   ├── filters.go
+│   │   ├── models.go
+│   │   ├── movies.go
+│   │   ├── runtime.go
+│   │   ├── tokens.go
+│   │   └── users.go
+│   ├── mailer
+│   │   ├── mailer.go
+│   │   └── templates
+│   │       └── user_welcome.tmpl
+│   └── validator
+│       └── validator.go
+├── migrations
+│   ├── 000001_create_movies_table.down.sql
+│   ├── 000001_create_movies_table.up.sql
+│   ├── 000002_add_movies_check_constraints.down.sql
+│   ├── 000002_add_movies_check_constraints.up.sql
+│   ├── 000003_add_movies_indexes.down.sql
+│   ├── 000003_add_movies_indexes.up.sql
+│   ├── 000004_create_users_table.down.sql
+│   ├── 000004_create_users_table.up.sql
+│   ├── 000005_create_tokens_table.down.sql
+│   └── 000005_create_tokens_table.up.sql
+├── mise.toml
+├── package-lock.json
+└── package.json
+
+```
+
+`README.md`:
+
+```md
+# Greenlight
+
+A RESTful movie information API written in Go, using [httprouter](https://github.com/julienschmidt/httprouter) and PostgreSQL.
+
+This project was built while working through *Let's Go Further* by Alex Edwards, then extended with additional changes and used as a base to apply Go backend patterns (middleware, rate limiting, panic recovery) to a separate project from scratch ([Shorty](https://codeberg.org/mazen-dev/shorty)).
+
+## Features
+
+- **Full CRUD REST API for movies** — list, create, view, update, and delete
+- **User registration and account activation** flow
+- **Per-client rate limiting** — token bucket algorithm (`golang.org/x/time/rate`) keyed by real client IP
+- **Panic recovery middleware** — catches panics and returns a clean 500 response instead of crashing
+- **PostgreSQL persistence** with SQL migrations
+- **Structured routing** via `httprouter`
+
+## API Endpoints
+
+| Method | Path                     | Description                     |
+|--------|---------------------------|----------------------------------|
+| GET    | `/v1/healthcheck`         | Returns API status               |
+| GET    | `/v1/movies`               | Lists movies                     |
+| POST   | `/v1/movies`               | Creates a new movie              |
+| GET    | `/v1/movies/:id`           | Shows a single movie             |
+| PATCH  | `/v1/movies/:id`           | Updates a movie                  |
+| DELETE | `/v1/movies/:id`           | Deletes a movie                  |
+| POST   | `/v1/users`                 | Registers a new user             |
+| PUT    | `/v1/users/activated`      | Activates a user account         |
+
+## Getting Started
+
+### Prerequisites
+
+- Go 1.2x+
+- Docker (for running PostgreSQL locally)
+
+### Setup
+
+```bash
+# clone the repo
+git clone https://codeberg.org/mazen-dev/greenlight.git
+cd greenlight
+
+# start PostgreSQL
+docker compose up -d
+
+# run migrations
+# (adjust to whatever migration tool/command you use, e.g. migrate)
+
+# run the API
+go run ./cmd/api
+```
+
+> Fill in exact env var names / DB DSN flag and the migration command once confirmed — matching Shorty's setup style above.
+
+## Example Usage
+
+```bash
+curl http://localhost:8080/v1/healthcheck
+
+curl http://localhost:8080/v1/movies
+```
+
+## Tech Stack
+
+Go · httprouter · PostgreSQL · Docker Compose
+
+```
+
+`\`:
+
+```
+local h = require('helpers')
+vim.pack.add { gh 'folke/which-key.nvim' }
+  require('which-key').setup {
+    -- Delay between pressing a key and opening which-key (milliseconds)
+    delay = 0,
+    icons = { mappings = vim.g.have_nerd_font },
+    -- Document existing key chains
+    spec = {
+      { '<leader>s', group = '[S]earch', mode = { 'n', 'v' } },
+      { '<leader>t', group = '[T]oggle' },
+      { '<leader>h', group = 'Git [H]unk', mode = { 'n', 'v' } }, -- Enable gitsigns recommended keymaps first
+      { 'gr', group = 'LSP Actions', mode = { 'n' } },
+    },
+  }
+
+```
+
+`cmd/api/errors.go`:
+
+```go
+package main
+
+import (
+	"fmt"
+	"net/http"
+)
+
+func (app *application) logError(r *http.Request, err error) {
+	var (
+		method = r.Method
+		uri    = r.URL.RequestURI()
+	)
+
+	app.logger.Error(err.Error(), "method", method, "uri", uri)
+}
+
+func (app *application) errorResponse(w http.ResponseWriter, r *http.Request, status int, message any) {
+	env := envelope{"error": message}
+
+	err := app.writeJSON(w, status, env, nil)
+	if err != nil {
+		app.logError(r, err)
+		w.WriteHeader(500)
+	}
+}
+
+func (app *application) serverErrorResponse(w http.ResponseWriter, r *http.Request, err error) {
+	app.logError(r, err)
+
+	message := "the server encountered a problem and could not process your request"
+	app.errorResponse(w, r, http.StatusNotFound, message)
+}
+
+func (app *application) notFoundResponse(w http.ResponseWriter, r *http.Request) {
+	message := "the requested resource could not be found"
+	app.errorResponse(w, r, http.StatusNotFound, message)
+}
+
+func (app *application) methodNotAllowedResponse(w http.ResponseWriter, r *http.Request) {
+	message := fmt.Sprintf("the %s method is not supported for this resource", r.Method)
+	app.errorResponse(w, r, http.StatusMethodNotAllowed, message)
+}
+
+func (app *application) badRequestResponse(w http.ResponseWriter, r *http.Request, err error) {
+	app.errorResponse(w, r, http.StatusBadRequest, err.Error())
+}
+
+func (app *application) faildValidationResponse(w http.ResponseWriter, r *http.Request, errors map[string]string) {
+	app.errorResponse(w, r, http.StatusUnprocessableEntity, errors)
+}
+
+func (app *application) editConflictResponse(w http.ResponseWriter, r *http.Request) {
+	message := "unable to update the record due to an edit conflict, please try again"
+	app.errorResponse(w, r, http.StatusConflict, message)
+}
+
+func (app *application) rateLimitExceededResponse(w http.ResponseWriter, r *http.Request) {
+	message := "rate limit exceeded"
+	app.errorResponse(w, r, http.StatusTooManyRequests, message)
+}
+
+```
+
+`cmd/api/healthcheck.go`:
+
+```go
+package main
+
+import (
+	"net/http"
+)
+
+func (app *application) healthcheckHandler(w http.ResponseWriter, r *http.Request) {
+	env := envelope{
+		"status": "available",
+		"system_info": map[string]string{
+			"environment": app.config.env,
+			"version":     version,
+		},
+	}
+	err := app.writeJSON(w, http.StatusOK, env, nil)
+	if err != nil {
+		app.logError(r, err)
+		app.serverErrorResponse(w, r, err)
+	}
+}
+
+```
+
+`cmd/api/helpers.go`:
+
+```go
+package main
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"strconv"
+	"strings"
+
+	"github.com/baka-devel/greenlight/internal/validator"
+	"github.com/julienschmidt/httprouter"
+)
+
+func (app *application) background(fn func()) {
+	app.wg.Add(1)
+	go func() {
+		defer app.wg.Done()
+		defer func() {
+			if err := recover(); err != nil {
+				app.logger.Error(fmt.Sprintf("%v", err))
+			}
+		}()
+
+		fn()
+	}()
+}
+
+func (app *application) readString(qs url.Values, key string, defaultValue string) string {
+	s := qs.Get(key)
+	if s == "" {
+		return defaultValue
+	}
+	return s
+}
+
+func (app *application) readCSV(qs url.Values, key string, defaultValue []string) []string {
+	csv := qs.Get(key)
+	if csv == "" {
+		return defaultValue
+	}
+	return strings.Split(csv, ",")
+}
+
+func (app *application) readInt(qs url.Values, key string, defaultValue int, v *validator.Validator) int {
+	s := qs.Get(key)
+	if s == "" {
+		return defaultValue
+	}
+	i, err := strconv.Atoi(s)
+	if err != nil {
+		v.AddError(key, "must be an integer value")
+		return defaultValue
+	}
+	return i
+}
+
+type envelope map[string]any
+
+func (app *application) readIDParam(r *http.Request) (int64, error) {
+	params := httprouter.ParamsFromContext(r.Context())
+
+	id, err := strconv.ParseInt(params.ByName("id"), 10, 64)
+	if err != nil || id <= 0 {
+		return 0, errors.New("invalid id parameter")
+	}
+
+	return id, nil
+}
+
+func (app *application) readJSON(w http.ResponseWriter, r *http.Request, dst any) error {
+	r.Body = http.MaxBytesReader(w, r.Body, 1_048_576)
+
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+
+	err := dec.Decode(dst)
+	if err != nil {
+		var syntaxError *json.SyntaxError
+		var unmarshalTypeError *json.UnmarshalTypeError
+		var invalidUnmarshalError *json.InvalidUnmarshalError
+		var maxBytesError *http.MaxBytesError
+		switch {
+		case errors.As(err, &syntaxError):
+			return fmt.Errorf("body contains badly-formed JSON (at character %d)", syntaxError.Offset)
+		case errors.Is(err, io.ErrUnexpectedEOF):
+			return errors.New("body contains badly-formed JSON")
+		case errors.As(err, &unmarshalTypeError):
+			if unmarshalTypeError.Field != "" {
+				return fmt.Errorf("body contains incorrect JSON type for field %q", unmarshalTypeError.Field)
+			}
+			return fmt.Errorf("body contains incorrect JSON type (at character %d)", unmarshalTypeError.Offset)
+		case errors.Is(err, io.EOF):
+			return errors.New("body must not be empty")
+		case strings.HasPrefix(err.Error(), "json: unknown field "):
+			fieldName := strings.TrimPrefix(err.Error(), "json: unknown field ")
+			return fmt.Errorf("body contains unknown key %s", fieldName)
+		case errors.As(err, &maxBytesError):
+			return fmt.Errorf("body must not be larger than %d bytes", maxBytesError.Limit)
+		case errors.As(err, &invalidUnmarshalError):
+			panic(err)
+		default:
+			return err
+		}
+	}
+	err = dec.Decode(&struct{}{})
+	if !errors.Is(err, io.EOF) {
+		return errors.New("body must only contain a single JSON value")
+	}
+	return nil
+}
+
+func (app *application) writeJSON(w http.ResponseWriter, status int, data envelope, headers http.Header) error {
+	js, err := json.MarshalIndent(data, "", "\t")
+	if err != nil {
+		return err
+	}
+
+	js = append(js, '\n')
+
+	for k, v := range headers {
+		w.Header()[k] = v
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	w.Write(js)
+
+	return nil
+}
+
+```
+
+`cmd/api/main.go`:
+
+```go
+package main
+
+import (
+	"context"
+	"database/sql"
+	"flag"
+	"log/slog"
+	"os"
+	"sync"
+	"time"
+
+	"github.com/baka-devel/greenlight/internal/data"
+	"github.com/baka-devel/greenlight/internal/mailer"
+	_ "github.com/lib/pq"
+)
+
+// version no. as a hard-coded global constant
+const version = "1.0.0"
+
+// Configuration struct that holds all the settings for our application
+type config struct {
+	port int
+	env  string
+	db   struct {
+		dsn          string
+		maxOpenConns int
+		maxIdleConns int
+		maxIdleTime  time.Duration
+	}
+	limiter struct {
+		rps     float64
+		burst   int
+		enabled bool
+	}
+	smtp struct {
+		host     string
+		port     int
+		username string
+		password string
+		sender   string
+	}
+}
+
+// Application struct holds the dependencies for our http-handlers, helpers, and middleware.
+type application struct {
+	config config
+	logger *slog.Logger
+	models data.Models
+	mailer *mailer.Mailer
+	wg     sync.WaitGroup
+}
+
+func main() {
+	// declare an instance of our config struct
+	var cfg config
+
+	// Read the value of the port and env command-line flags into the config struct.
+	// we default port to 4000 and env to development if no corresponding flags are provided.
+	flag.IntVar(&cfg.port, "port", 4000, "API server port")
+	flag.StringVar(&cfg.env, "env", "development", "Environment (development|staging|production)")
+	flag.StringVar(&cfg.db.dsn, "db-dsn", os.Getenv("GREENLIGHT_DB_DSN"), "PostgreSQL DSN")
+	flag.IntVar(&cfg.db.maxOpenConns, "db-max-open-conns", 25, "PostgreSQL max open connections")
+	flag.IntVar(&cfg.db.maxIdleConns, "db-max-idle-conns", 25, "PostgreSQL max idle connections")
+	flag.DurationVar(&cfg.db.maxIdleTime, "db-max-idle-time", 15*time.Minute, "PostgreSQL max connection idle time")
+	flag.Float64Var(&cfg.limiter.rps, "limiter-rps", 2, "Rate limiter maximum requests per second")
+	flag.IntVar(&cfg.limiter.burst, "limiter-burst", 4, "Rate limiter maximum burst")
+	flag.BoolVar(&cfg.limiter.enabled, "limiter-enabled", true, "Enable rate limiter")
+	flag.StringVar(&cfg.smtp.host, "smtp-host", "localhost", "SMTP host")
+	flag.IntVar(&cfg.smtp.port, "smtp-port", 1025, "SMTP port")
+	flag.StringVar(&cfg.smtp.username, "smtp-username", "baka-devel", "SMTP username")
+	flag.StringVar(&cfg.smtp.password, "smtp-password", "pa55word", "SMTP password")
+	flag.StringVar(&cfg.smtp.sender, "smtp-sender", "Greenlight <no-reply@greenlight.baka-devel.net>", "SMTP sender")
+	flag.Parse()
+
+	// Initialize a new structured logger which writes log entries to the standard out
+	// stream.
+	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+
+	db, err := openDB(cfg)
+	if err != nil {
+		logger.Error(err.Error())
+		os.Exit(1)
+	}
+	defer db.Close()
+	logger.Info("database connection pool established")
+
+	mailer, err := mailer.New(cfg.smtp.host, cfg.smtp.port, cfg.smtp.username, cfg.smtp.password, cfg.smtp.sender)
+	if err != nil {
+		logger.Error(err.Error())
+		os.Exit(1)
+	}
+
+	app := &application{
+		config: cfg,
+		logger: logger,
+		models: data.NewModels(db),
+		mailer: mailer,
+	}
+
+	err = app.serve()
+	if err != nil {
+		logger.Error(err.Error())
+		os.Exit(1)
+	}
+}
+
+func openDB(cfg config) (*sql.DB, error) {
+	db, err := sql.Open("postgres", cfg.db.dsn)
+	if err != nil {
+		return nil, err
+	}
+	db.SetMaxOpenConns(cfg.db.maxOpenConns)
+	db.SetMaxIdleConns(cfg.db.maxIdleConns)
+	db.SetConnMaxIdleTime(cfg.db.maxIdleTime)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	err = db.PingContext(ctx)
+	if err != nil {
+		db.Close()
+		return nil, err
+	}
+
+	return db, nil
+}
+
+```
+
+`cmd/api/middleware.go`:
+
+```go
+package main
+
+import (
+	"fmt"
+	"net/http"
+	"sync"
+	"time"
+
+	"github.com/tomasen/realip"
+	"golang.org/x/time/rate"
+)
+
+func (app *application) rateLimit(next http.Handler) http.Handler {
+	type client struct {
+		limiter  *rate.Limiter
+		lastSeen time.Time
+	}
+	var (
+		mu      sync.Mutex
+		clients = make(map[string]*client)
+	)
+	go func() {
+		for {
+			time.Sleep(time.Minute)
+			mu.Lock()
+
+			for ip, client := range clients {
+				if time.Since(client.lastSeen) > 3*time.Minute {
+					delete(clients, ip)
+				}
+
+			}
+			mu.Unlock()
+		}
+	}()
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if app.config.limiter.enabled {
+			ip := realip.FromRequest(r)
+
+			mu.Lock()
+
+			_, found := clients[ip]
+			if !found {
+				clients[ip] = &client{limiter: rate.NewLimiter(rate.Limit(app.config.limiter.rps), app.config.limiter.burst)}
+			}
+
+			clients[ip].lastSeen = time.Now()
+
+			if !clients[ip].limiter.Allow() {
+				mu.Unlock()
+				app.rateLimitExceededResponse(w, r)
+				return
+			}
+			mu.Unlock()
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func (app *application) recoverPanic(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			if err := recover(); err != nil {
+				w.Header().Set("Connection", "close")
+				app.serverErrorResponse(w, r, fmt.Errorf("%s", err))
+			}
+		}()
+		next.ServeHTTP(w, r)
+	})
+}
+
+```
+
+`cmd/api/movies.go`:
+
+```go
+package main
+
+import (
+	"errors"
+	"fmt"
+	"net/http"
+
+	"github.com/baka-devel/greenlight/internal/data"
+	"github.com/baka-devel/greenlight/internal/validator"
+)
+
+func (app *application) createMovieHandler(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		Title   string       `json:"title"`
+		Year    int32        `json:"year"`
+		Runtime data.Runtime `json:"runtime"`
+		Genres  []string     `json:"genres"`
+	}
+	err := app.readJSON(w, r, &input)
+	if err != nil {
+		app.badRequestResponse(w, r, err)
+		return
+	}
+
+	movie := &data.Movie{
+		Title:   input.Title,
+		Year:    input.Year,
+		Runtime: input.Runtime,
+		Genres:  input.Genres,
+	}
+	v := validator.New()
+	data.ValidateMovie(v, movie)
+
+	if !v.Valid() {
+		app.faildValidationResponse(w, r, v.Errors)
+		return
+	}
+
+	err = app.models.Movies.Insert(movie)
+	if err != nil {
+		app.serverErrorResponse(w, r, err)
+		return
+	}
+
+	headers := make(http.Header)
+	headers.Set("Location", fmt.Sprintf("/v1/movies/%d", movie.ID))
+
+	err = app.writeJSON(w, http.StatusCreated, envelope{"movie": movie}, headers)
+	if err != nil {
+		app.serverErrorResponse(w, r, err)
+	}
+
+}
+
+func (app *application) showMovieHandler(w http.ResponseWriter, r *http.Request) {
+	id, err := app.readIDParam(r)
+	if err != nil {
+		app.notFoundResponse(w, r)
+		return
+	}
+
+	movie, err := app.models.Movies.Get(id)
+	if err != nil {
+		switch {
+		case errors.Is(err, data.ErrRecordNotFound):
+			app.notFoundResponse(w, r)
+		default:
+			app.serverErrorResponse(w, r, err)
+		}
+		return
+	}
+	err = app.writeJSON(w, http.StatusOK, envelope{"movie": movie}, nil)
+	if err != nil {
+		app.logError(r, err)
+		app.serverErrorResponse(w, r, err)
+	}
+}
+
+func (app *application) updateMovieHandler(w http.ResponseWriter, r *http.Request) {
+	id, err := app.readIDParam(r)
+	if err != nil {
+		app.notFoundResponse(w, r)
+		return
+	}
+
+	movie, err := app.models.Movies.Get(id)
+	if err != nil {
+		switch {
+		case errors.Is(err, data.ErrRecordNotFound):
+			app.notFoundResponse(w, r)
+		default:
+			app.serverErrorResponse(w, r, err)
+		}
+		return
+	}
+
+	var input struct {
+		Title   *string       `json:"title"`
+		Year    *int32        `json:"year"`
+		Runtime *data.Runtime `json:"runtime"`
+		Genres  []string      `json:"genres"`
+	}
+	err = app.readJSON(w, r, &input)
+	if err != nil {
+		app.badRequestResponse(w, r, err)
+		return
+	}
+
+	if input.Title != nil {
+		movie.Title = *input.Title
+	}
+	if input.Year != nil {
+		movie.Year = *input.Year
+	}
+	if input.Runtime != nil {
+		movie.Runtime = *input.Runtime
+	}
+	if input.Genres != nil {
+		movie.Genres = input.Genres
+	}
+
+	v := validator.New()
+	data.ValidateMovie(v, movie)
+	if !v.Valid() {
+		app.faildValidationResponse(w, r, v.Errors)
+		return
+	}
+
+	err = app.models.Movies.Update(movie)
+	if err != nil {
+		switch {
+		case errors.Is(err, data.ErrEditConflict):
+			app.editConflictResponse(w, r)
+		default:
+			app.serverErrorResponse(w, r, err)
+		}
+		return
+	}
+	err = app.writeJSON(w, http.StatusCreated, envelope{"movie": movie}, nil)
+	if err != nil {
+		app.serverErrorResponse(w, r, err)
+	}
+}
+
+func (app *application) deleteMovieHandler(w http.ResponseWriter, r *http.Request) {
+	id, err := app.readIDParam(r)
+	if err != nil {
+		app.notFoundResponse(w, r)
+		return
+	}
+	err = app.models.Movies.Delete(id)
+	if err != nil {
+		switch {
+		case errors.Is(err, data.ErrRecordNotFound):
+			app.notFoundResponse(w, r)
+		default:
+			app.serverErrorResponse(w, r, err)
+		}
+		return
+	}
+	err = app.writeJSON(w, http.StatusOK, envelope{"messagge": "movie successfully deleted"}, nil)
+	if err != nil {
+		app.serverErrorResponse(w, r, err)
+	}
+}
+
+func (app *application) listMoviesHandler(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		Title   string
+		Genres  []string
+		Filters data.Filters
+	}
+
+	v := validator.New()
+	qs := r.URL.Query()
+	input.Title = app.readString(qs, "title", "")
+	input.Genres = app.readCSV(qs, "genres", []string{})
+	input.Filters.Page = app.readInt(qs, "page", 1, v)
+	input.Filters.PageSize = app.readInt(qs, "page_size", 20, v)
+	input.Filters.Sort = app.readString(qs, "sort", "id")
+	input.Filters.SortSafelist = []string{"id", "title", "year", "runtime", "-id", "-title", "-year", "-runtime"}
+
+	if data.ValidateFilters(v, input.Filters); !v.Valid() {
+		app.faildValidationResponse(w, r, v.Errors)
+		return
+	}
+
+	movies, metadata, err := app.models.Movies.GetAll(input.Title, input.Genres, input.Filters)
+	if err != nil {
+		app.serverErrorResponse(w, r, err)
+		return
+	}
+	err = app.writeJSON(w, http.StatusOK, envelope{"metadata": metadata, "movies": movies}, nil)
+	if err != nil {
+		app.serverErrorResponse(w, r, err)
+	}
+}
+
+```
+
+`cmd/api/routes.go`:
+
+```go
+package main
+
+import (
+	"net/http"
+
+	"github.com/julienschmidt/httprouter"
+)
+
+func (app *application) routes() http.Handler {
+	// Initialize a new httprouter router instance
+	router := httprouter.New()
+
+	router.NotFound = http.HandlerFunc(app.notFoundResponse)
+	router.MethodNotAllowed = http.HandlerFunc(app.methodNotAllowedResponse)
+
+	// Register the relevant methods, URL patterns and handler functions for our
+	// endpoints using the HandlerFunc() method. Note that http.MethodGet and
+	// http.MethodPost are constants which equate to the strings "GET" and "POST"
+	// respectively.
+	router.HandlerFunc(http.MethodGet, "/v1/healthcheck", app.healthcheckHandler)
+	router.HandlerFunc(http.MethodGet, "/v1/movies", app.listMoviesHandler)
+	router.HandlerFunc(http.MethodPost, "/v1/movies", app.createMovieHandler)
+	router.HandlerFunc(http.MethodGet, "/v1/movies/:id", app.showMovieHandler)
+	router.HandlerFunc(http.MethodPatch, "/v1/movies/:id", app.updateMovieHandler)
+	router.HandlerFunc(http.MethodDelete, "/v1/movies/:id", app.deleteMovieHandler)
+	router.HandlerFunc(http.MethodPost, "/v1/users", app.registerUserHandler)
+	router.HandlerFunc(http.MethodPut, "/v1/users/activated", app.activateUserHandler)
+
+	// return the httprouter instance
+	return app.recoverPanic(app.rateLimit(router))
+}
+
+```
+
+`cmd/api/server.go`:
+
+```go
+package main
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log/slog"
+	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+)
+
+func (app *application) serve() error {
+	srv := &http.Server{
+		Addr:         fmt.Sprintf(":%d", app.config.port),
+		Handler:      app.routes(),
+		IdleTimeout:  time.Minute,
+		ReadTimeout:  5 * time.Second,
+		WriteTimeout: 10 * time.Second,
+		ErrorLog:     slog.NewLogLogger(app.logger.Handler(), slog.LevelError),
+	}
+
+	shutdownError := make(chan error)
+	go func() {
+		quit := make(chan os.Signal, 1)
+		signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+		s := <-quit
+
+		app.logger.Info("caught signal", "singal", s.String())
+
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		err := srv.Shutdown(ctx)
+		if err != nil {
+			shutdownError <- err
+		}
+
+		app.logger.Info("completing background tasks", "addr", srv.Addr)
+
+		app.wg.Wait()
+		shutdownError <- nil
+	}()
+
+	app.logger.Info("starting server", "addr", srv.Addr, "env", app.config.env)
+
+	err := srv.ListenAndServe()
+	if !errors.Is(err, http.ErrServerClosed) {
+		return err
+	}
+
+	err = <-shutdownError
+	if err != nil {
+		return err
+	}
+
+	app.logger.Info("stopped server", "addr", srv.Addr)
+	return nil
+}
+
+```
+
+`cmd/api/users.go`:
+
+```go
+package main
+
+import (
+	"errors"
+	"net/http"
+	"time"
+
+	"github.com/baka-devel/greenlight/internal/data"
+	"github.com/baka-devel/greenlight/internal/validator"
+)
+
+func (app *application) activateUserHandler(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		TokenPlaintext string `json:"token"`
+	}
+
+	err := app.readJSON(w, r, &input)
+	if err != nil {
+		app.badRequestResponse(w, r, err)
+		return
+	}
+
+	v := validator.New()
+
+	if data.ValidateTokenPlaintext(v, input.TokenPlaintext); !v.Valid() {
+		app.faildValidationResponse(w, r, v.Errors)
+		return
+	}
+
+	user, err := app.models.Users.GetForToken(data.ScopeActivation, input.TokenPlaintext)
+	if err != nil {
+		switch {
+		case errors.Is(err, data.ErrRecordNotFound):
+			v.AddError("token", "invalid or expired activation token")
+			app.faildValidationResponse(w, r, v.Errors)
+		default:
+			app.serverErrorResponse(w, r, err)
+		}
+		return
+	}
+
+	user.Activated = true
+
+	err = app.models.Users.Update(user)
+	if err != nil {
+		switch {
+		case errors.Is(err, data.ErrEditConflict):
+			app.editConflictResponse(w, r)
+		default:
+			app.serverErrorResponse(w, r, err)
+		}
+		return
+	}
+
+	err = app.models.Tokens.DeleteAllForUser(data.ScopeActivation, user.ID)
+	if err != nil {
+		app.serverErrorResponse(w, r, err)
+		return
+	}
+
+	err = app.writeJSON(w, http.StatusOK, envelope{"user": user}, nil)
+	if err != nil {
+		app.serverErrorResponse(w, r, err)
+	}
+}
+
+func (app *application) registerUserHandler(w http.ResponseWriter, r *http.Request) {
+	var input struct {
+		Name     string `json:"name"`
+		Email    string `json:"email"`
+		Password string `json:"password"`
+	}
+
+	err := app.readJSON(w, r, &input)
+	if err != nil {
+		app.badRequestResponse(w, r, err)
+		return
+	}
+
+	user := data.User{
+		Name:      input.Name,
+		Email:     input.Email,
+		Activated: false,
+	}
+
+	err = user.Password.Set(input.Password)
+	if err != nil {
+		app.serverErrorResponse(w, r, err)
+		return
+	}
+
+	v := validator.New()
+	if data.ValidateUser(v, &user); !v.Valid() {
+		app.faildValidationResponse(w, r, v.Errors)
+		return
+	}
+
+	err = app.models.Users.Insert(&user)
+	if err != nil {
+		switch {
+		case errors.Is(err, data.ErrDuplicateEmail):
+			v.AddError("email", "a user with this email address already exists")
+			app.faildValidationResponse(w, r, v.Errors)
+		default:
+			app.serverErrorResponse(w, r, err)
+		}
+		return
+	}
+
+	token, err := app.models.Tokens.New(user.ID, 3*24*time.Hour, data.ScopeActivation)
+	if err != nil {
+		app.serverErrorResponse(w, r, err)
+		return
+	}
+
+	app.background(func() {
+		data := map[string]any{
+			"activationToken": token.Plaintext,
+			"userID":          user.ID,
+		}
+		err = app.mailer.Send(user.Email, "user_welcome.tmpl", data)
+		if err != nil {
+			app.logger.Error(err.Error())
+			return
+		}
+	})
+
+	err = app.writeJSON(w, http.StatusAccepted, envelope{"user": user}, nil)
+	if err != nil {
+		app.serverErrorResponse(w, r, err)
+	}
+}
+
+```
+
+`compose.yml`:
+
+```yml
+services:
+  db:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_USER: ${DB_NAME}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql
+  mailpit:
+    image: axllent/mailpit
+    container_name: mailpit
+    restart: unless-stopped
+    volumes:
+      - mailpit_data:/data
+    ports:
+      - 8025:8025
+      - 1025:1025
+    environment:
+      MP_MAX_MESSAGES: 5000
+      MP_DATABASE: /data/mailpit.db
+      MP_SMTP_AUTH_ACCEPT_ANY: 1
+      MP_SMTP_AUTH_ALLOW_INSECURE: 1
+volumes:
+  postgres_data:
+  mailpit_data:
+
+```
+
+`go.mod`:
+
+```mod
+module github.com/baka-devel/greenlight
+
+go 1.26.5
+
+require (
+	github.com/julienschmidt/httprouter v1.3.0
+	github.com/lib/pq v1.12.3
+	github.com/tomasen/realip v0.0.0-20180522021738-f0c99a92ddce
+	github.com/wneessen/go-mail v0.8.1
+	golang.org/x/crypto v0.56.0
+	golang.org/x/time v0.15.0
+)
+
+require golang.org/x/text v0.41.0 // indirect
+
+```
+
+`go.sum`:
+
+```sum
+github.com/julienschmidt/httprouter v1.3.0 h1:U0609e9tgbseu3rBINet9P48AI/D3oJs4dN7jwJOQ1U=
+github.com/julienschmidt/httprouter v1.3.0/go.mod h1:JR6WtHb+2LUe8TCKY3cZOxFyyO8IZAc4RVcycCCAKdM=
+github.com/lib/pq v1.12.3 h1:tTWxr2YLKwIvK90ZXEw8GP7UFHtcbTtty8zsI+YjrfQ=
+github.com/lib/pq v1.12.3/go.mod h1:/p+8NSbOcwzAEI7wiMXFlgydTwcgTr3OSKMsD2BitpA=
+github.com/tomasen/realip v0.0.0-20180522021738-f0c99a92ddce h1:fb190+cK2Xz/dvi9Hv8eCYJYvIGUTN2/KLq1pT6CjEc=
+github.com/tomasen/realip v0.0.0-20180522021738-f0c99a92ddce/go.mod h1:o8v6yHRoik09Xen7gje4m9ERNah1d1PPsVq1VEx9vE4=
+github.com/wneessen/go-mail v0.8.1 h1:tVcncj02/QySVFw3zr/kXOzZcuFQqBNT6K+Rbgm/pcM=
+github.com/wneessen/go-mail v0.8.1/go.mod h1:dWZ61zadzCIyvB4y1/YzC5O7MrbbzBfPkARmbosdf8w=
+golang.org/x/crypto v0.56.0 h1:GUh5Ii4J5jtcseSMiRqr1jXCNHoxjeV9Fmekc2oLy6Y=
+golang.org/x/crypto v0.56.0/go.mod h1:OMW5y6CY9l38uPLmxU6l6pwcXp1obtLo3e6gT7gQR2I=
+golang.org/x/text v0.41.0 h1:vz/seA0lnX87Othu2f/0L24RcgrXD9/YFTSuGjj3rH8=
+golang.org/x/text v0.41.0/go.mod h1:jvf1O8ajNzZqhSrQBPbutR/EB83Cc0CFrezNQIwbb5M=
+golang.org/x/time v0.15.0 h1:bbrp8t3bGUeFOx08pvsMYRTCVSMk89u4tKbNOZbp88U=
+golang.org/x/time v0.15.0/go.mod h1:Y4YMaQmXwGQZoFaVFk4YpCt4FLQMYKZe9oeV/f4MSno=
+
+```
+
+`internal/data/filters.go`:
+
+```go
+package data
+
+import (
+	"slices"
+	"strings"
+
+	"github.com/baka-devel/greenlight/internal/validator"
+)
+
+type Metadata struct {
+	CurrentPage  int `json:"current_page,omitzero"`
+	PageSize     int `json:"page_size,omitzero"`
+	FirstPage    int `json:"first_page,omitzero"`
+	LastPage     int `json:"last_page,omitzero"`
+	TotalRecords int `json:"total_records,omitzero"`
+}
+
+func calculateMetadata(totalRecords, page, pageSize int) Metadata {
+	if totalRecords == 0 {
+		return Metadata{}
+	}
+
+	return Metadata{
+		CurrentPage:  page,
+		PageSize:     pageSize,
+		FirstPage:    1,
+		LastPage:     (totalRecords + pageSize - 1) / pageSize,
+		TotalRecords: totalRecords,
+	}
+}
+
+type Filters struct {
+	Page         int
+	PageSize     int
+	Sort         string
+	SortSafelist []string
+}
+
+func (f Filters) limit() int {
+	return f.PageSize
+}
+
+func (f Filters) offset() int {
+	return (f.Page - 1) * f.PageSize
+}
+
+func (f Filters) sortColumn() string {
+	if slices.Contains(f.SortSafelist, f.Sort) {
+		return strings.TrimPrefix(f.Sort, "-")
+	}
+	panic("unsafe sort parameter: " + f.Sort)
+}
+
+func (f Filters) sortDirection() string {
+	if strings.HasPrefix(f.Sort, "-") {
+		return "DESC"
+	}
+	return "ASC"
+}
+
+func ValidateFilters(v *validator.Validator, f Filters) {
+	v.Check(f.Page > 0, "page", "must be greeter than zero")
+	v.Check(f.Page <= 10_000_000, "page", "must be a maximum of 10 million")
+	v.Check(f.PageSize > 0, "page_size", "must be greeter than zero")
+	v.Check(f.PageSize <= 100, "page_size", "must be a maximum of 100")
+	v.Check(validator.PermittedValue(f.Sort, f.SortSafelist...), "sort", "invalid sort value")
+}
+
+```
+
+`internal/data/models.go`:
+
+```go
+package data
+
+import (
+	"database/sql"
+	"errors"
+)
+
+var (
+	ErrRecordNotFound = errors.New("record not found")
+	ErrEditConflict   = errors.New("edit conflict")
+)
+
+type Models struct {
+	Movies MovieModel
+	Tokens TokenModel
+	Users  UserModel
+}
+
+func NewModels(db *sql.DB) Models {
+	return Models{
+		Movies: MovieModel{DB: db},
+		Tokens: TokenModel{DB: db},
+		Users:  UserModel{DB: db},
+	}
+}
+
+```
+
+`internal/data/movies.go`:
+
+```go
+package data
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"fmt"
+	"time"
+
+	"github.com/baka-devel/greenlight/internal/validator"
+	"github.com/lib/pq"
+)
+
+type MovieModel struct {
+	DB *sql.DB
+}
+
+func (m MovieModel) Insert(movie *Movie) error {
+	query := `
+		INSERT INTO movies (title, year, runtime, genres)
+		VALUES ($1, $2, $3, $4)
+		RETURNING id, created_at, version
+	`
+	args := []any{movie.Title, movie.Year, movie.Runtime, pq.Array(movie.Genres)}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	return m.DB.QueryRowContext(ctx, query, args...).Scan(&movie.ID, &movie.CreatedAt, &movie.Version)
+}
+
+func (m MovieModel) Get(id int64) (*Movie, error) {
+	if id < 1 {
+		return nil, ErrRecordNotFound
+	}
+
+	query := `
+		SELECT id, created_at, title, year, runtime, genres, version
+		FROM movies
+		WHERE id = $1
+	`
+	var movie Movie
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	err := m.DB.QueryRowContext(ctx, query, id).Scan(
+		&movie.ID,
+		&movie.CreatedAt,
+		&movie.Title,
+		&movie.Year,
+		&movie.Runtime,
+		pq.Array(&movie.Genres),
+		&movie.Version,
+	)
+	if err != nil {
+		switch {
+		case errors.Is(err, sql.ErrNoRows):
+			return nil, ErrRecordNotFound
+		default:
+			return nil, err
+		}
+	}
+	return &movie, nil
+}
+
+func (m MovieModel) GetAll(title string, genres []string, filters Filters) ([]*Movie, Metadata, error) {
+	query := fmt.Sprintf(`
+	SELECT count(*) OVER(), id, created_at, title, year, runtime, genres, version
+	FROM movies
+	WHERE (to_tsvector('simple', title) @@ plainto_tsquery('simple', $1) OR $1 = '')
+	AND (genres @> $2 OR $2 = '{}')
+	ORDER BY %s %s,  id ASC
+	LIMIT $3 OFFSET $4
+	`, filters.sortColumn(), filters.sortDirection())
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	args := []any{title, pq.Array(genres), filters.limit(), filters.offset()}
+	rows, err := m.DB.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, Metadata{}, err
+	}
+	defer rows.Close()
+	totalRecords := 0
+	movies := []*Movie{}
+	for rows.Next() {
+		var movie Movie
+		err := rows.Scan(
+			&totalRecords,
+			&movie.ID,
+			&movie.CreatedAt,
+			&movie.Title,
+			&movie.Year,
+			&movie.Runtime,
+			pq.Array(&movie.Genres),
+			&movie.Version,
+		)
+		if err != nil {
+			return nil, Metadata{}, err
+		}
+		movies = append(movies, &movie)
+	}
+	if err = rows.Err(); err != nil {
+		return nil, Metadata{}, err
+	}
+	metadata := calculateMetadata(totalRecords, filters.Page, filters.PageSize)
+	return movies, metadata, nil
+}
+
+func (m MovieModel) Update(movie *Movie) error {
+	query := `
+		UPDATE movies
+		SET title = $1, year = $2, runtime = $3, genres = $4, version = version + 1
+	 	WHERE id = $5 AND version = $6
+		RETURNING version
+	`
+	args := []any{
+		movie.Title,
+		movie.Year,
+		movie.Runtime,
+		pq.Array(movie.Genres),
+		movie.ID,
+		movie.Version,
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	err := m.DB.QueryRowContext(ctx, query, args...).Scan(&movie.Version)
+	if err != nil {
+		switch {
+		case errors.Is(err, sql.ErrNoRows):
+			return ErrEditConflict
+		default:
+			return err
+		}
+	}
+	return nil
+}
+
+func (m MovieModel) Delete(id int64) error {
+	if id < 1 {
+		return ErrRecordNotFound
+	}
+	query := `
+		DELETE FROM movies
+		WHERE id = $1
+	`
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	result, err := m.DB.ExecContext(ctx, query, id)
+	if err != nil {
+		return err
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rowsAffected == 0 {
+		return ErrRecordNotFound
+	}
+	return nil
+}
+
+type Movie struct {
+	ID        int64     `json:"id"`
+	CreatedAt time.Time `json:"-"`
+	Title     string    `json:"title"`
+	Year      int32     `json:"year,omitzero"`
+	Runtime   Runtime   `json:"runtime,omitzero"`
+	Genres    []string  `json:"genres,omitzero"`
+	Version   int32     `json:"version"`
+}
+
+func ValidateMovie(v *validator.Validator, movie *Movie) {
+	v.Check(movie.Title != "", "title", "must be porvided")
+	v.Check(len(movie.Title) <= 500, "title", "must not be more than 500 bytes long")
+
+	v.Check(movie.Year != 0, "year", "must be provided")
+	v.Check(movie.Year >= 1888, "year", "must be greater than 1888")
+	v.Check(movie.Year <= int32(time.Now().Year()), "year", "must not be in the future")
+
+	v.Check(movie.Runtime != 0, "runtime", "must be provided")
+	v.Check(movie.Runtime > 0, "runtime", "must be a positive integer")
+
+	v.Check(movie.Genres != nil, "genres", "must be provided")
+	v.Check(len(movie.Genres) >= 1, "genres", "must contain at least 1 genre")
+	v.Check(len(movie.Genres) <= 5, "genres", "must not contain more than 5 genres")
+	v.Check(validator.Unique(movie.Genres), "genres", "must not contain duplicate values")
+}
+
+```
+
+`internal/data/runtime.go`:
+
+```go
+package data
+
+import (
+	"errors"
+	"fmt"
+	"strconv"
+	"strings"
+)
+
+var ErrInvalidRuntimeFormat = errors.New("invalid runtime format")
+
+type Runtime int32
+
+func (r Runtime) MarshalJSON() ([]byte, error) {
+	jsonValue := fmt.Sprintf("%d mins", r)
+
+	quotedJSONValue := strconv.Quote(jsonValue)
+
+	return []byte(quotedJSONValue), nil
+}
+
+func (r *Runtime) UnmarshalJSON(jsonValue []byte) error {
+	unquotedJSONValue, err := strconv.Unquote(string(jsonValue))
+	if err != nil {
+		return ErrInvalidRuntimeFormat
+	}
+
+	parts := strings.Split(unquotedJSONValue, " ")
+	if len(parts) != 2 || parts[1] != "mins" {
+		return ErrInvalidRuntimeFormat
+	}
+	i, err := strconv.ParseInt(parts[0], 10, 32)
+	if err != nil {
+		return ErrInvalidRuntimeFormat
+	}
+
+	*r = Runtime(i)
+	return nil
+}
+
+```
+
+`internal/data/tokens.go`:
+
+```go
+package data
+
+import (
+	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"database/sql"
+	"time"
+
+	"github.com/baka-devel/greenlight/internal/validator"
+)
+
+const (
+	ScopeActivation     = "activation"
+	ScopeAuthentication = "authentication"
+)
+
+type Token struct {
+	Plaintext string    `json:"token"`
+	Hash      []byte    `json:"-"`
+	UserID    int64     `json:"-"`
+	Expiry    time.Time `json:"expiry"`
+	Scope     string    `json:"-"`
+}
+
+func ValidateTokenPlaintext(v *validator.Validator, tokenPlaintext string) {
+	v.Check(tokenPlaintext != "", "token", "must be provided")
+	v.Check(len(tokenPlaintext) == 26, "token", "must be 26 bytes long")
+}
+
+type TokenModel struct {
+	DB *sql.DB
+}
+
+func (m TokenModel) New(userID int64, ttl time.Duration, scope string) (*Token, error) {
+	token := generateToken(userID, ttl, scope)
+	err := m.Insert(token)
+	return token, err
+}
+
+func (m TokenModel) Insert(token *Token) error {
+	query := `
+			INSERT INTO tokens (hash, user_id, expiry, scope)
+			VALUES ($1, $2, $3, $4)
+		`
+	args := []any{token.Hash, token.UserID, token.Expiry, token.Scope}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	_, err := m.DB.ExecContext(ctx, query, args...)
+	return err
+}
+
+func (m TokenModel) DeleteAllForUser(scope string, userID int64) error {
+	query := `
+			DELETE FROM tokens
+			WHERE scope = $1 AND user_id = $2
+		`
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	_, err := m.DB.ExecContext(ctx, query, scope, userID)
+	return err
+}
+
+func generateToken(userID int64, ttl time.Duration, scope string) *Token {
+	token := &Token{
+		Plaintext: rand.Text(),
+		UserID:    userID,
+		Expiry:    time.Now().Add(ttl),
+		Scope:     scope,
+	}
+	hash := sha256.Sum256([]byte(token.Plaintext))
+	token.Hash = hash[:]
+	return token
+}
+
+```
+
+`internal/data/users.go`:
+
+```go
+package data
+
+import (
+	"context"
+	"crypto/sha256"
+	"database/sql"
+	"errors"
+	"time"
+
+	"github.com/baka-devel/greenlight/internal/validator"
+	"github.com/lib/pq"
+	"golang.org/x/crypto/bcrypt"
+)
+
+var (
+	ErrDuplicateEmail = errors.New("duplicate email")
+)
+
+type UserModel struct {
+	DB *sql.DB
+}
+
+func (m UserModel) GetForToken(tokenScope, tokenPlaintext string) (*User, error) {
+	tokenHash := sha256.Sum256([]byte(tokenPlaintext))
+
+	query := `
+	SELECT users.id, users.created_at, users.name, users.email, users.password_hash, users.activated, users.version
+	FROM users
+	INNER JOIN tokens
+	ON users.id = tokens.user_id
+	WHERE tokens.hash = $1
+	AND tokens.scope = $2
+	AND tokens.expiry > $3
+	`
+	args := []any{tokenHash[:], tokenScope, time.Now()}
+
+	var user User
+
+	ctx, canel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer canel()
+
+	err := m.DB.QueryRowContext(ctx, query, args...).Scan(
+		&user.ID,
+		&user.CreatedAt,
+		&user.Name,
+		&user.Email,
+		&user.Password.hash,
+		&user.Activated,
+		&user.Version,
+	)
+
+	if err != nil {
+		switch {
+		case errors.Is(err, sql.ErrNoRows):
+			return nil, ErrRecordNotFound
+		default:
+			return nil, err
+		}
+	}
+
+	return &user, nil
+}
+
+func (m UserModel) Insert(user *User) error {
+	query := `
+		INSERT INTO urls (name, email, password_hash, activated)
+		VALUES ($1, $2, $3, $4)
+		RETURNING id, created_at, version
+	`
+	args := []any{user.Name, user.Email, user.Password.hash, user.Activated}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	err := m.DB.QueryRowContext(ctx, query, args...).Scan(&user.ID, &user.CreatedAt, &user.Version)
+	if err != nil {
+		if pqErr, ok := errors.AsType[*pq.Error](err); ok {
+			if pqErr.Code == "23505" && pqErr.Constraint == "users_email_key" {
+				return ErrDuplicateEmail
+			}
+		}
+		return err
+	}
+	return nil
+}
+
+func (m UserModel) GetByEmail(email string) (*User, error) {
+	query := `
+		SELECT id, created_at, name, email, password_hash, activated, version
+		FROM users
+		WHERE email = $1
+	`
+
+	var user User
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	err := m.DB.QueryRowContext(ctx, query, email).Scan(
+		&user.ID,
+		&user.CreatedAt,
+		&user.Name,
+		&user.Email,
+		&user.Password.hash,
+		&user.Activated,
+		&user.Version,
+	)
+	if err != nil {
+		switch {
+		case errors.Is(err, sql.ErrNoRows):
+			return nil, ErrRecordNotFound
+		default:
+			return nil, err
+		}
+	}
+	return &user, nil
+}
+
+func (m UserModel) Update(user *User) error {
+	query := `
+		UPDATE users
+		SET name = $1, email = $2, password_hash = $3, activated = $4, version = version + 1
+		WHERE id = $5 AND version = $6
+		RETURNING version
+	`
+	args := []any{
+		user.Name,
+		user.Email,
+		user.Password.hash,
+		user.Activated,
+		user.ID,
+		user.Version,
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	err := m.DB.QueryRowContext(ctx, query, args...).Scan(&user.Version)
+	if err != nil {
+		if pqErr, ok := errors.AsType[*pq.Error](err); ok {
+			if pqErr.Code == "23505" && pqErr.Constraint == "users_email_key" {
+				return ErrDuplicateEmail
+			}
+		} else if errors.Is(err, sql.ErrNoRows) {
+			return ErrRecordNotFound
+		}
+		return err
+	}
+	return nil
+}
+
+type User struct {
+	ID        int64     `json:"id"`
+	CreatedAt time.Time `json:"created_at"`
+	Name      string    `json:"name"`
+	Email     string    `json:"email"`
+	Password  password  `json:"-"`
+	Activated bool      `json:"activated"`
+	Version   int       `json:"-"`
+}
+
+type password struct {
+	plaintext *string
+	hash      []byte
+}
+
+func (p *password) Set(plaintextPassword string) error {
+	hash, err := bcrypt.GenerateFromPassword([]byte(plaintextPassword), 12)
+	if err != nil {
+		return err
+	}
+	p.plaintext = &plaintextPassword
+	p.hash = hash
+	return nil
+}
+
+func (p *password) Matches(plaintextPassword string) (bool, error) {
+	err := bcrypt.CompareHashAndPassword(p.hash, []byte(plaintextPassword))
+	if err != nil {
+		switch {
+		case errors.Is(err, bcrypt.ErrMismatchedHashAndPassword):
+			return false, nil
+		default:
+			return false, err
+		}
+	}
+	return true, nil
+}
+
+func ValidateEmail(v *validator.Validator, email string) {
+	v.Check(email != "", "email", "must be provided")
+	v.Check(validator.Matches(email, validator.EmailRX), "email", "must be a valid email address")
+}
+
+func ValidatePasswordPlaintext(v *validator.Validator, password string) {
+	v.Check(password != "", "password", "must be provided")
+	v.Check(len(password) >= 8, "password", "must be at least 8 bytes long")
+	v.Check(len(password) <= 72, "password", "must not be more than 72 bytes long")
+}
+
+func ValidateUser(v *validator.Validator, user *User) {
+	v.Check(user.Name != "", "name", "must be provided")
+	v.Check(len(user.Name) <= 500, "name", "must not be more than 500 bytes long")
+
+	ValidateEmail(v, user.Email)
+	if user.Password.plaintext != nil {
+		ValidatePasswordPlaintext(v, *user.Password.plaintext)
+	}
+	if user.Password.hash == nil {
+		panic("missing password hash for user")
+	}
+}
+
+```
+
+`internal/mailer/mailer.go`:
+
+```go
+package mailer
+
+import (
+	"bytes"
+	"embed"
+	"time"
+
+	ht "html/template"
+	tt "text/template"
+
+	"github.com/wneessen/go-mail"
+)
+
+//go:embed "templates"
+var templateFS embed.FS
+
+type Mailer struct {
+	client *mail.Client
+	sender string
+}
+
+func New(host string, port int, username, password, sender string) (*Mailer, error) {
+	client, err := mail.NewClient(
+		host,
+		mail.WithSMTPAuth(mail.SMTPAuthLogin),
+		mail.WithPort(port),
+		mail.WithUsername(username),
+		mail.WithPassword(password),
+		mail.WithTimeout(5*time.Second),
+		mail.WithTLSPolicy(mail.NoTLS),
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	mailer := &Mailer{
+		client: client,
+		sender: sender,
+	}
+	return mailer, err
+}
+
+func (m *Mailer) Send(recipient string, templateFile string, data any) error {
+	textTmpl, err := tt.New("").ParseFS(templateFS, "templates/"+templateFile)
+	if err != nil {
+		return err
+	}
+
+	subject := new(bytes.Buffer)
+	err = textTmpl.ExecuteTemplate(subject, "subject", data)
+	if err != nil {
+		return err
+	}
+
+	plainBody := new(bytes.Buffer)
+	err = textTmpl.ExecuteTemplate(plainBody, "plainBody", data)
+	if err != nil {
+		return err
+	}
+
+	htmlTmpl, err := ht.New("").ParseFS(templateFS, "templates/"+templateFile)
+	if err != nil {
+		return err
+	}
+
+	htmlBody := new(bytes.Buffer)
+	err = htmlTmpl.ExecuteTemplate(htmlBody, "htmlBody", data)
+	if err != nil {
+		return err
+	}
+
+	msg := mail.NewMsg()
+
+	err = msg.To(recipient)
+	if err != nil {
+		return err
+	}
+
+	err = msg.From(m.sender)
+	if err != nil {
+		return err
+	}
+
+	msg.Subject(subject.String())
+	msg.SetBodyString(mail.TypeTextPlain, plainBody.String())
+	msg.AddAlternativeString(mail.TypeTextHTML, htmlBody.String())
+
+	return m.client.DialAndSend(msg)
+}
+
+```
+
+`internal/mailer/templates/user_welcome.tmpl`:
+
+```tmpl
+{{define "subject"}} Welcome to Greenlight{{end}}
+
+{{define "plainBody"}}
+Hi,
+
+Thanks for signing up for a Greenlight account. We're excited to have you on board!
+For future reference, your user ID number is {{.ID}}.
+
+Please send a request to the `PUT /v1/users/activated` endpoint with the following JSON
+body to activate your account:
+
+{"token": "{{.activationToken}}"}
+
+Please note that this is a one-time use token and it will expire in 3 days.
+
+Thanks,
+
+The Greenlight Team
+{{end}}
+
+{{define "htmlBody"}}
+<!doctype html>
+<html>
+<head>
+    <meta name="viewport" content="width=device-width"/>
+    <meta http-equiv="Content-Type" content="text;html; charset=UTF-8" />
+</head>
+    <body>
+        <p>Hi,</p>
+        <p>Thanks for signing up for a Greenlight account. We're excited to have you on board!</p>
+        <p>For future reference, your user ID number is {{.ID}}.</p>
+        <p>Please send a request to the <code>PUT /v1/users/activated</code> endpoint with the
+        following JSON body to activate your account:</p>
+        <pre><code>
+        {"token": "{{.activationToken}}"}
+        </code></pre>
+        <p>Please note that this is a one-time use token and it will expire in 3 days.</p>
+        <p>Thanks,</p>
+        <p>The Greenlight Team</p>
+    </body>
+</html>
+{{end}}
+
+```
+
+`internal/validator/validator.go`:
+
+```go
+package validator
+
+import (
+	"regexp"
+	"slices"
+)
+
+var (
+	EmailRX = regexp.MustCompile("^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$")
+)
+
+type Validator struct {
+	Errors map[string]string
+}
+
+func New() *Validator {
+	return &Validator{Errors: make(map[string]string)}
+}
+
+func (v *Validator) Valid() bool {
+	return len(v.Errors) == 0
+}
+
+func (v *Validator) AddError(key, message string) {
+	if _, ok := v.Errors[key]; !ok {
+		v.Errors[key] = message
+	}
+}
+
+func (v *Validator) Check(ok bool, key, message string) {
+	if !ok {
+		v.AddError(key, message)
+	}
+}
+
+func PermittedValue[T comparable](value T, permittedValues ...T) bool {
+	return slices.Contains(permittedValues, value)
+}
+
+func Matches(value string, rx *regexp.Regexp) bool {
+	return rx.MatchString(value)
+}
+
+func Unique[T comparable](values []T) bool {
+	uniqueValues := make(map[T]bool)
+
+	for _, v := range values {
+		uniqueValues[v] = true
+	}
+	return len(uniqueValues) == len(values)
+}
+
+```
+
+`migrations/000001_create_movies_table.down.sql`:
+
+```sql
+DROP TABLE IF EXISTS movies;
+
+```
+
+`migrations/000001_create_movies_table.up.sql`:
+
+```sql
+CREATE TABLE IF NOT EXISTS movies (
+    id bigserial PRIMARY KEY,
+    created_at timestamp(0) with time zone NOT NULL DEFAULT NOW(),
+    title text NOT NULL,
+    year integer NOT NULL,
+    runtime integer NOT NULL,
+    genres text[] NOT NULL,
+    version integer NOT NULL DEFAULT 1
+    );
+
+```
+
+`migrations/000002_add_movies_check_constraints.down.sql`:
+
+```sql
+ALTER TABLE movies DROP CONSTRAINT IF EXISTS movies_runtime_check;
+ALTER TABLE movies DROP CONSTRAINT IF EXISTS movies_year_check;
+ALTER TABLE movies DROP CONSTRAINT IF EXISTS movies_genres_length_check;
+
+```
+
+`migrations/000002_add_movies_check_constraints.up.sql`:
+
+```sql
+ALTER TABLE movies ADD CONSTRAINT movies_runtime_check CHECK (runtime >= 0);
+ALTER TABLE movies ADD CONSTRAINT movies_year_check CHECK (year BETWEEN 1888 AND date_part('year', now()));
+ALTER TABLE movies ADD CONSTRAINT movies_genres_length_check CHECK (array_length(genres, 1) BETWEEN 1 AND 5);
+
+```
+
+`migrations/000003_add_movies_indexes.down.sql`:
+
+```sql
+DROP INDEX IF EXISTS movies_title_idx;
+DROP INDEX IF EXISTS movies_genres_idx;
+
+```
+
+`migrations/000003_add_movies_indexes.up.sql`:
+
+```sql
+CREATE INDEX IF NOT EXISTS movies_title_idx ON movies USING GIN (to_tsvector('simple', title));
+CREATE INDEX IF NOT EXISTS movies_genres_idx ON movies USING GIN (genres);
+
+
+```
+
+`migrations/000004_create_users_table.down.sql`:
+
+```sql
+DROP TABLE IF EXISTS users;
+
+```
+
+`migrations/000004_create_users_table.up.sql`:
+
+```sql
+CREATE TABLE IF NOT EXISTS users (
+    id bigserial PRIMARY KEY,
+    created_at timestamp(0) with time zone NOT NULL DEFAULT NOW();
+    name text NOT NULL,
+    email   citext UNIQUE NOT NULL,
+    password_hash bytea NOT NULL,
+    activated bool NOT NULL,
+    version integer NOT NULL DEFAULT 1
+    );
+
+```
+
+`migrations/000005_create_tokens_table.down.sql`:
+
+```sql
+DROP TABLE ID EXISTS tokens;
+```
+
+`migrations/000005_create_tokens_table.up.sql`:
+
+```sql
+CREATE TABLE IF NOT EXISTS tokens (
+    hash bytea PRIMARY KEY,
+    user_id bigint NOT NULL REFERENCES users ON DELETE CASCADE,
+    expiry timestamp(0) with time zone NOT NULL,
+    scope text NOT NULL
+);
+```
+
+`mise.toml`:
+
+```toml
+[tools]
+"github:golang-migrate/migrate" = "latest"
+go = "latest"
+
+[tasks]
+up = { run = "podman-compose up -d" }
+down = { run = "podman-compose down" }
+r = { run = "go run ./cmd/api" }
+
+```
+
+`package-lock.json`:
+
+```json
+{
+  "name": "greenlight",
+  "lockfileVersion": 3,
+  "requires": true,
+  "packages": {
+    "": {
+      "dependencies": {
+        "sql-formatter": "^15.8.2"
+      }
+    },
+    "node_modules/argparse": {
+      "version": "2.0.1",
+      "resolved": "https://registry.npmjs.org/argparse/-/argparse-2.0.1.tgz",
+      "integrity": "sha512-8+9WqebbFzpX9OR+Wa6O29asIogeRMzcGtAINdpMHHyAg10f05aSFVBbcEqGf/PXw1EjAZ+q2/bEBg3DvurK3Q==",
+      "license": "Python-2.0"
+    },
+    "node_modules/commander": {
+      "version": "2.20.3",
+      "resolved": "https://registry.npmjs.org/commander/-/commander-2.20.3.tgz",
+      "integrity": "sha512-GpVkmM8vF2vQUkj2LvZmD35JxeJOLCwJ9cUkugyk2nuhbv3+mJvpLYYt+0+USMxE+oj+ey/lJEnhZw75x/OMcQ==",
+      "license": "MIT"
+    },
+    "node_modules/discontinuous-range": {
+      "version": "1.0.0",
+      "resolved": "https://registry.npmjs.org/discontinuous-range/-/discontinuous-range-1.0.0.tgz",
+      "integrity": "sha512-c68LpLbO+7kP/b1Hr1qs8/BJ09F5khZGTxqxZuhzxpmwJKOgRFHJWIb9/KmqnqHhLdO55aOxFH/EGBvUQbL/RQ==",
+      "license": "MIT"
+    },
+    "node_modules/moo": {
+      "version": "0.5.3",
+      "resolved": "https://registry.npmjs.org/moo/-/moo-0.5.3.tgz",
+      "integrity": "sha512-m2fmM2dDm7GZQsY7KK2cme8agi+AAljILjQnof7p1ZMDe6dQ4bdnSMx0cPppudoeNv5hEFQirN6u+O4fDE0IWA==",
+      "license": "BSD-3-Clause"
+    },
+    "node_modules/nearley": {
+      "version": "2.20.1",
+      "resolved": "https://registry.npmjs.org/nearley/-/nearley-2.20.1.tgz",
+      "integrity": "sha512-+Mc8UaAebFzgV+KpI5n7DasuuQCHA89dmwm7JXw3TV43ukfNQ9DnBH3Mdb2g/I4Fdxc26pwimBWvjIw0UAILSQ==",
+      "license": "MIT",
+      "dependencies": {
+        "commander": "^2.19.0",
+        "moo": "^0.5.0",
+        "railroad-diagrams": "^1.0.0",
+        "randexp": "0.4.6"
+      },
+      "bin": {
+        "nearley-railroad": "bin/nearley-railroad.js",
+        "nearley-test": "bin/nearley-test.js",
+        "nearley-unparse": "bin/nearley-unparse.js",
+        "nearleyc": "bin/nearleyc.js"
+      },
+      "funding": {
+        "type": "individual",
+        "url": "https://nearley.js.org/#give-to-nearley"
+      }
+    },
+    "node_modules/railroad-diagrams": {
+      "version": "1.0.0",
+      "resolved": "https://registry.npmjs.org/railroad-diagrams/-/railroad-diagrams-1.0.0.tgz",
+      "integrity": "sha512-cz93DjNeLY0idrCNOH6PviZGRN9GJhsdm9hpn1YCS879fj4W+x5IFJhhkRZcwVgMmFF7R82UA/7Oh+R8lLZg6A==",
+      "license": "CC0-1.0"
+    },
+    "node_modules/randexp": {
+      "version": "0.4.6",
+      "resolved": "https://registry.npmjs.org/randexp/-/randexp-0.4.6.tgz",
+      "integrity": "sha512-80WNmd9DA0tmZrw9qQa62GPPWfuXJknrmVmLcxvq4uZBdYqb1wYoKTmnlGUchvVWe0XiLupYkBoXVOxz3C8DYQ==",
+      "license": "MIT",
+      "dependencies": {
+        "discontinuous-range": "1.0.0",
+        "ret": "~0.1.10"
+      },
+      "engines": {
+        "node": ">=0.12"
+      }
+    },
+    "node_modules/ret": {
+      "version": "0.1.15",
+      "resolved": "https://registry.npmjs.org/ret/-/ret-0.1.15.tgz",
+      "integrity": "sha512-TTlYpa+OL+vMMNG24xSlQGEJ3B/RzEfUlLct7b5G/ytav+wPrplCpVMFuwzXbkecJrb6IYo1iFb0S9v37754mg==",
+      "license": "MIT",
+      "engines": {
+        "node": ">=0.12"
+      }
+    },
+    "node_modules/sql-formatter": {
+      "version": "15.8.2",
+      "resolved": "https://registry.npmjs.org/sql-formatter/-/sql-formatter-15.8.2.tgz",
+      "integrity": "sha512-kTYRg5FIcvsDtYUG2Qn9pYT6xKwiLJN5TTIvc5Mur6hIg4pSfdpHu8Yyu5bqESLHnVM3mXzD446cb2+uEaKZXg==",
+      "license": "MIT",
+      "dependencies": {
+        "argparse": "^2.0.1",
+        "nearley": "^2.20.1"
+      },
+      "bin": {
+        "sql-formatter": "bin/sql-formatter-cli.cjs"
+      }
+    }
+  }
+}
+
+```
+
+`package.json`:
+
+```json
+{
+  "dependencies": {
+    "sql-formatter": "^15.8.2"
+  }
+}
+
+```
