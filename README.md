@@ -19,23 +19,6 @@ Greenlight eschews heavy all-in-one frameworks in favor of composable Go standar
 * **Domain & Data Layer (`internal/data`)**: Encapsulates data models, validation rules, type extensions (e.g. custom JSON serialization), and SQL queries utilizing PostgreSQL features.
 * **Infrastructure Services (`internal/mailer`, `internal/validator`)**: Dedicated, decoupled components for email delivery and input validation.
 
-```mermaid
-graph TD
-    Client[HTTP / Client Layer]
-    MW[Middlewares: Panic Recovery | Rate Limiter]
-    Handlers[Handlers & Envelopes `cmd/api` | Validation `internal/validator`]
-    Data[Data Layer `internal/data` <br/>- Optimistic Locking<br/>- Full-Text Search GIN]
-    Mailer[Mailer `internal/mailer` <br/>- Embedded Templates embed.FS<br/>- Async Background Goroutines]
-    DB[(PostgreSQL 18 Database)]
-    SMTP[Mailpit / SMTP Server]
-
-    Client --> MW
-    MW --> Handlers
-    Handlers --> Data
-    Handlers --> Mailer
-    Data --> DB
-    Mailer --> SMTP
-```
 ---
 
 ## ⚡ Key Technical Features & Deep Dive
@@ -79,11 +62,12 @@ All requests and responses use JSON formatting with structured outer envelopes (
 | `DELETE` | `/v1/movies/:id` | Public | Deletes a movie entry by ID |
 | `POST` | `/v1/users` | Public | Registers a new account & sends asynchronous activation token |
 | `PUT` | `/v1/users/activated` | Public | Activates user account using a valid activation token |
+| `POST` | `/v1/tokens/authentication` | Public | Generates a authentication token given valid user credentials (email & password) |
 
 ---
 
 ## 📁 Project Structure
-
+``` txt
 greenlight
 ├── cmd
 │   └── api
@@ -114,7 +98,7 @@ greenlight
 ├── mise.toml                 # Task runner & tool version configurations
 ├── go.mod                    # Go dependency specifications
 └── README.md                 # Project documentation
-
+```
 ---
 
 ## 🛠 Getting Started & Local Development
@@ -129,40 +113,54 @@ greenlight
 ### 1. Environment & Database Setup
 
 Clone the repository and start the development containers (PostgreSQL 18 & Mailpit):
-
+``` bash
 git clone https://codeberg.org/mazen-dev/greenlight.git
 cd greenlight
 
+# Export required database credentials for container startup
+export DB_NAME="greenlight"
+export DB_PASSWORD="<the password>"
+
+# Export standard database DSN used by mise and golang-migrate
+export GREENLIGHT_DB_DSN="postgres://${DB_NAME}:${DB_PASSWORD}@localhost:5432/greenlight?sslmode=disable"
+```
+
 # Start PostgreSQL and Mailpit services via mise or docker-compose
+``` bash
 mise run up
 # OR: podman-compose up -d / docker compose up -d
+``` 
 
 ### 2. Run Database Migrations
 
 Apply database migrations to set up the schema, check constraints, and GIN indexes:
 
-export GREENLIGHT_DB_DSN="postgres://greenlight:pa55word@localhost:5432/greenlight?sslmode=disable"
-
+``` bash
 migrate -path=./migrations -database=$GREENLIGHT_DB_DSN up
+```
 
 ### 3. Run the Application
 
 Start the API server:
-
+``` bash
 # Using mise shortcut
 mise run r
 
 # OR using standard Go CLI
 go run ./cmd/api -db-dsn=$GREENLIGHT_DB_DSN
+```
 
 ---
 
 ## 🧪 Example Usage & Quickstart
 
 ### 1. Healthcheck Endpoint
+``` bash
 curl -i http://localhost:4000/v1/healthcheck
+```
 
 ### 2. Create a New Movie
+``` bash
 curl -i -X POST http://localhost:4000/v1/movies \
   -H "Content-Type: application/json" \
   -d '{
@@ -171,11 +169,15 @@ curl -i -X POST http://localhost:4000/v1/movies \
     "runtime": "107 mins",
     "genres": ["animation", "adventure"]
   }'
+``` 
 
 ### 3. Query Movies with Search, Filters & Pagination
+``` bash
 curl -i "http://localhost:4000/v1/movies?title=moana&genres=animation&page=1&page_size=10&sort=-year"
+```
 
 ### 4. Register a User Account
+``` bash
 curl -i -X POST http://localhost:4000/v1/users \
   -H "Content-Type: application/json" \
   -d '{
@@ -183,15 +185,17 @@ curl -i -X POST http://localhost:4000/v1/users \
     "email": "jane@example.com",
     "password": "pa55wordString"
   }'
-
+```
 > **Note:** Open Mailpit at `http://localhost:8025` to inspect the generated welcome email and extract the 26-character activation token.
 
 ### 5. Activate User Account
+``` bash
 curl -i -X PUT http://localhost:4000/v1/users/activated \
   -H "Content-Type: application/json" \
   -d '{
     "token": "YOUR_26_CHARACTER_TOKEN"
   }'
+```
 
 ---
 
