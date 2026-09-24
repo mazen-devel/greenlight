@@ -6,6 +6,7 @@ import (
 	"flag"
 	"log/slog"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -39,6 +40,9 @@ type config struct {
 		password string
 		sender   string
 	}
+	cors struct {
+		trustedOrigins []string
+	}
 }
 
 // Application struct holds the dependencies for our http-handlers, helpers, and middleware.
@@ -70,6 +74,12 @@ func main() {
 	flag.StringVar(&cfg.smtp.username, "smtp-username", "baka-devel", "SMTP username")
 	flag.StringVar(&cfg.smtp.password, "smtp-password", "pa55word", "SMTP password")
 	flag.StringVar(&cfg.smtp.sender, "smtp-sender", "Greenlight <no-reply@greenlight.baka-devel.net>", "SMTP sender")
+
+	flag.Func("cors-trusted-origins", "Trusted CORS origins (space separated)", func(val string) error {
+		cfg.cors.trustedOrigins = strings.Fields(val)
+		return nil
+	})
+
 	flag.Parse()
 
 	// Initialize a new structured logger which writes log entries to the standard out
