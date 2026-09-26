@@ -1,8 +1,57 @@
 [tools]
-"github:golang-migrate/migrate" = "latest"
 go = "latest"
 
-[tasks]
-up = { run = "podman-compose up -d" }
-down = { run = "podman-compose down" }
-r = { run = "go run ./cmd/api" }
+[env]
+DSN = "postgres://${DB_NAME:-}:${DB_PASSWORD:-}@localhost/${DB_NAME:-}?sslmode=disable"
+
+[tasks."compose:up"]
+description = "run the compose services"
+run = "podman-compose up -d"
+
+[tasks."compose:down"]
+description = "stop the compose file services"
+run = "podman-compose down" 
+
+
+[tasks."db:psql"]
+description = "open the database"
+depends = ["compose:up"]
+run = "psql $DSN"
+
+[tasks."db:migrate"]
+description = "perform the migrations on the database"
+usage = '''
+arg "[direction]" help="the direction of the migrations (up/down)" default="up" {
+	choices "up" "down"
+}
+'''
+depends = ["compose:up"]
+run = "migrate -path ./migrations -database $DSN $usage_direction"
+
+[tasks."db:migration"]
+description = "creating a new migration files"
+usage = '''
+arg "<name>" help="the name of the migration"
+'''
+depends = ["compose:up"]
+run = "migrate create -seq -ext=.sql -dir=./migrations $usage_name"
+
+[tasks."api:run"]
+description = "run the api"
+run = "go run ./cmd/api"
+
+[tasks.tidy]
+description = "tidying and vendoring module dependencies and formating .go files"
+run = '''
+	go mod tidy && go mod verify && go mod vendor && go fmt ./...
+'''
+
+[tasks.audit]
+description = "checking module dependencies, vetting code and running tests"
+run = '''
+	go mod tidy -diff &&\
+	go mod verify &&\
+	go vet ./... &&\
+	go tool staticcheck ./... &&\
+	go test -race -vet=off ./...
+'''

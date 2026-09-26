@@ -122,7 +122,7 @@ export DB_NAME="greenlight"
 export DB_PASSWORD="<the password>"
 
 # Export standard database DSN used by mise and golang-migrate
-export GREENLIGHT_DB_DSN="postgres://${DB_NAME}:${DB_PASSWORD}@localhost:5432/greenlight?sslmode=disable"
+export DSN="postgres://${DB_NAME}:${DB_PASSWORD}@localhost:5432/greenlight?sslmode=disable"
 ```
 
 # Start PostgreSQL and Mailpit services 
@@ -137,7 +137,7 @@ mise run up
 Apply database migrations to set up the schema, check constraints, and GIN indexes:
 
 ``` bash
-migrate -path=./migrations -database=$GREENLIGHT_DB_DSN up
+migrate -path=./migrations -database=$DSN up
 ```
 
 ### 3. Run the Application
@@ -148,7 +148,7 @@ Start the API server:
 mise run r
 
 # OR using standard Go CLI
-go run ./cmd/api -db-dsn=$GREENLIGHT_DB_DSN
+go run ./cmd/api -db-dsn=$DSN
 ```
 
 ---
