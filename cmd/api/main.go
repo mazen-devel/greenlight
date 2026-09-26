@@ -15,11 +15,11 @@ import (
 
 	"github.com/baka-devel/greenlight/internal/data"
 	"github.com/baka-devel/greenlight/internal/mailer"
+	"github.com/baka-devel/greenlight/internal/vcs"
 	_ "github.com/lib/pq"
 )
 
-// version no. as a hard-coded global constant
-const version = "1.0.0"
+var version = vcs.Version()
 
 // Configuration struct that holds all the settings for our application
 type config struct {
