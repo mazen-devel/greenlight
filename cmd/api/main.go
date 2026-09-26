@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"expvar"
 	"flag"
+	"fmt"
 	"log/slog"
 	"os"
 	"runtime"
@@ -82,7 +83,14 @@ func main() {
 		return nil
 	})
 
+	displayVersion := flag.Bool("version", false, "display version and exit")
+
 	flag.Parse()
+
+	if *displayVersion {
+		fmt.Println("version:\t", version)
+		os.Exit(0)
+	}
 
 	// Initialize a new structured logger which writes log entries to the standard out
 	// stream.

@@ -1,9 +1,6 @@
 [tools]
 go = "latest"
 
-[env]
-DSN = "postgres://${DB_NAME:-}:${DB_PASSWORD:-}@localhost/${DB_NAME:-}?sslmode=disable"
-
 [tasks."compose:up"]
 description = "run the compose services"
 run = "podman-compose up -d"
@@ -36,9 +33,13 @@ arg "<name>" help="the name of the migration"
 depends = ["compose:up"]
 run = "migrate create -seq -ext=.sql -dir=./migrations $usage_name"
 
-[tasks."api:run"]
+[tasks."run:api"]
 description = "run the api"
 run = "go run ./cmd/api"
+
+[tasks."build:api"]
+description = "build the api"
+run = "go build -o=./bin/api ./cmd/api"
 
 [tasks.tidy]
 description = "tidying and vendoring module dependencies and formating .go files"
